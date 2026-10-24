@@ -436,7 +436,10 @@ main() {
 
   # Lance via « curl | bash », l'entree standard est le script lui-meme :
   # les questions doivent lire le clavier.
-  exec </dev/tty
+  if ! { exec </dev/tty; } 2>/dev/null; then
+    echo "Cet installateur pose des questions : lancez la commande dans l'application Terminal." >&2
+    exit 1
+  fi
 
   printf '\n  Préparation…\n'
   installer_gum
