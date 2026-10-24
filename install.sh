@@ -136,7 +136,13 @@ telecharger() {  # telecharger <url> <destination>
 
 verifier_empreinte() {  # verifier_empreinte <fichier> <sha256 attendu>
   local obtenu
-  obtenu="$(shasum -a 256 "$1" | awk '{print $1}')"
+  # shasum est un script Perl (Apple a annonce le retrait des langages de
+  # script) : repli sur openssl, natif lui aussi.
+  if [ -x /usr/bin/shasum ] && /usr/bin/perl -v >/dev/null 2>&1; then
+    obtenu="$(/usr/bin/shasum -a 256 "$1" | awk '{print $1}')"
+  else
+    obtenu="$(/usr/bin/openssl dgst -sha256 -r "$1" | awk '{print $1}')"
+  fi
   [ "$obtenu" = "$2" ] || { journal "empreinte $1 : $obtenu au lieu de $2"; return 1; }
 }
 
