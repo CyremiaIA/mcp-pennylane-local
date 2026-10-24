@@ -275,11 +275,17 @@ demander_token() {
 ranger_token() {
   # -U met a jour si l'entree existe deja. -T autorise /usr/bin/security a la
   # relire sans fenetre de confirmation (c'est lui que le serveur appelle).
-  # -w en dernier sans valeur : le token est lu sur l'entree standard (deux
-  # fois, saisie + confirmation), jamais passe en argument.
-  printf '%s\n%s\n' "$TOKEN" "$TOKEN" | security add-generic-password -U -a "$USER" -s "$TROUSSEAU" \
-    -l "Pennylane (connecteur Claude)" -T /usr/bin/security -w >>"$LOG" 2>&1 \
+  # Mode commande (security -i) : la commande arrive sur l'entree standard, le
+  # token n'est donc jamais en argument (ps). Surtout pas « -w » sans valeur :
+  # dans un vrai terminal, security redemande alors la saisie au clavier et
+  # enregistre ce qui est tape, pas le token.
+  case "$TOKEN" in *'"'*|*'\'*) echec "Le token contient un caractère inattendu. Recopiez-le depuis Pennylane." ;; esac
+  printf 'add-generic-password -U -a "%s" -s "%s" -l "Pennylane (connecteur Claude)" -T /usr/bin/security -w "%s"\n' \
+    "$USER" "$TROUSSEAU" "$TOKEN" | security -i >>"$LOG" 2>&1 \
     || echec "Impossible d'enregistrer le token dans le trousseau macOS."
+  # Relecture : ce qui est range doit etre exactement ce qui a ete valide.
+  [ "$(token_trousseau)" = "$TOKEN" ] \
+    || echec "Le token enregistré dans le trousseau ne correspond pas à celui saisi."
   unset TOKEN
   succes "Token rangé dans le trousseau macOS (« Pennylane (connecteur Claude) »)"
 }
@@ -318,6 +324,15 @@ installer() {
   titre_etape 2 "Votre token Pennylane"
   local existant
   existant="$(token_trousseau)"
+  # Un token deja range mais refuse par Pennylane (expire, revoque, mal range)
+  # ne doit pas etre propose : on en redemande un.
+  if [ -n "$existant" ] && [ "$(TOKEN_PL="$existant" "$GUM" spin --spinner dot --title " Vérification du token enregistré…" -- \
+      bash -c 'curl -sS --connect-timeout 15 -o /dev/null -w "%{http_code}" -H @<(printf "Authorization: Bearer %s\n" "$TOKEN_PL") "$1/me" 2>/dev/null || echo 000' \
+      _ "$PENNYLANE_API")" != "200" ]; then
+    journal "token du trousseau refuse par Pennylane"
+    alerte "Le token enregistré sur ce Mac n'est plus accepté par Pennylane : il en faut un nouveau."
+    existant=""
+  fi
   if [ -n "$existant" ] && "$GUM" confirm "Un token est déjà enregistré sur ce Mac. Le garder ?" \
       --affirmative "Oui, le garder" --negative "Non, en saisir un nouveau"; then
     succes "Token existant conservé"
@@ -342,11 +357,12 @@ installer() {
     || echec "La configuration de Claude est illisible : rien n'a été modifié."
   succes "Pennylane ajouté à Claude Desktop"
   if claude_code; then
-    claude mcp remove --scope user "$NOM_MCP" >>"$LOG" 2>&1 || true
+    # </dev/null : avec le terminal en entree standard, claude plante (kqueue EINVAL).
+    claude mcp remove --scope user "$NOM_MCP" </dev/null >>"$LOG" 2>&1 || true
     if claude mcp add --scope user "$NOM_MCP" \
         -e "UV_CACHE_DIR=$UV_CACHE_DIR" -e "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR" \
         -e "UV_PYTHON_PREFERENCE=$UV_PYTHON_PREFERENCE" \
-        -- "$UV" run --quiet --script "$SERVEUR" >>"$LOG" 2>&1; then
+        -- "$UV" run --quiet --script "$SERVEUR" </dev/null >>"$LOG" 2>&1; then
       succes "Pennylane ajouté aussi à Claude Code"
     else
       alerte "Claude Code détecté mais l'ajout a échoué (sans conséquence pour Claude Desktop)."
@@ -414,7 +430,7 @@ desinstaller() {
   fi
   succes "Retiré de Claude Desktop"
   if claude_code; then
-    claude mcp remove --scope user "$NOM_MCP" >>"$LOG" 2>&1 && succes "Retiré de Claude Code" || true
+    claude mcp remove --scope user "$NOM_MCP" </dev/null >>"$LOG" 2>&1 && succes "Retiré de Claude Code" || true
   fi
   security delete-generic-password -s "$TROUSSEAU" >>"$LOG" 2>&1 && succes "Token retiré du trousseau" || true
   # gum vit dans le dossier supprime : on le copie le temps du message final.
