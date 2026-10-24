@@ -50,7 +50,9 @@ export UV_PYTHON_INSTALL_DIR="$DOSSIER/python"
 export UV_PYTHON_PREFERENCE="only-managed"
 
 ACCENT="39"
-ETAPES=5
+NOMS_ETAPES=("Préparation" "Token" "Claude" "Test" "Terminé")
+ETAPES=${#NOMS_ETAPES[@]}
+ETAPE=0
 
 # -----------------------------------------------------------------------------
 # Outils d'affichage
@@ -58,9 +60,37 @@ ETAPES=5
 
 journal() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
 
-titre_etape() {  # titre_etape <n> <texte>
+# Un ecran par etape : on efface, puis en-tete fixe + fil de progression
+# (✓ fait, ● en cours, ○ a venir, ✗ en echec).
+ecran() {  # ecran [echec]
+  local i marque ligne=""
+  clear
   echo
-  "$GUM" style --foreground "$ACCENT" --bold "Étape $1/$ETAPES · $2"
+  "$GUM" style --margin "0 2" --bold --foreground "$ACCENT" "Connecteur Pennylane pour Claude"
+  "$GUM" style --margin "0 2" --faint "proposé par Cyremia"
+  [ "$ETAPE" -gt 0 ] || return 0
+  for i in "${!NOMS_ETAPES[@]}"; do
+    # La derniere etape (« Terminé ») s'affiche directement comme faite.
+    if [ $((i + 1)) -lt "$ETAPE" ] || { [ "$ETAPE" -eq "$ETAPES" ] && [ "${1:-}" != "echec" ]; }; then
+      marque="$("$GUM" style --foreground 42 "✓ ${NOMS_ETAPES[$i]}")"
+    elif [ $((i + 1)) -gt "$ETAPE" ]; then marque="$("$GUM" style --faint "○ ${NOMS_ETAPES[$i]}")"
+    elif [ "${1:-}" = "echec" ];       then marque="$("$GUM" style --foreground 196 --bold "✗ ${NOMS_ETAPES[$i]}")"
+    else                                   marque="$("$GUM" style --foreground "$ACCENT" --bold "● ${NOMS_ETAPES[$i]}")"
+    fi
+    ligne+="$marque   "
+  done
+  echo
+  "$GUM" style --margin "0 2" "$ligne"
+  echo
+}
+
+titre_etape() {  # titre_etape <n> <texte>
+  # Laisse le temps de lire les ✓ de l'etape precedente avant d'effacer.
+  [ "$ETAPE" -gt 0 ] && sleep 1.2
+  ETAPE="$1"
+  ecran
+  "$GUM" style --margin "0 2" --bold "Étape $1/$ETAPES · $2"
+  echo
   journal "== Étape $1 : $2"
 }
 
@@ -83,6 +113,7 @@ attendre() {  # attendre <titre> <commande...> : spinner, sortie dans le journal
 echec() {
   journal "ECHEC $*"
   if [ -x "$GUM" ]; then
+    ecran echec
     encadre 196 \
       "$("$GUM" style --bold --foreground 196 "L'installation n'a pas abouti")" "" \
       "$*" "" \
@@ -295,9 +326,8 @@ ranger_token() {
 # -----------------------------------------------------------------------------
 
 installer() {
+  ecran
   encadre "$ACCENT" \
-    "$("$GUM" style --bold --foreground "$ACCENT" "Connecteur Pennylane pour Claude")" \
-    "$("$GUM" style --faint "proposé par Cyremia")" "" \
     "Claude pourra lire votre comptabilité Pennylane et préparer" \
     "devis, clients et produits, toujours avec votre accord." "" \
     "Durée : environ 5 minutes. Il vous faudra :" \
@@ -411,6 +441,7 @@ PY
 }
 
 desinstaller() {
+  ecran
   encadre 214 \
     "$("$GUM" style --bold "Désinstaller le connecteur Pennylane")" "" \
     "Le connecteur, son token et ses fichiers seront retirés de ce Mac." \
@@ -459,7 +490,6 @@ main() {
 
   printf '\n  Préparation…\n'
   installer_gum
-  clear
 
   case "${1:-}" in
     --desinstaller|--uninstall) desinstaller ;;
